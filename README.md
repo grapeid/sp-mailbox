@@ -57,29 +57,57 @@ already been sent — the sender believing it was delivered, the recipient never
 knowing it existed. Holding until the recipient says it has them costs storage
 and loses nothing.
 
-## Known limitation: enrollment does not bind a key to an AID
+## Enrollment binds the key to the AID
 
-**This is the one thing to read before running this in production.**
+A signature on an enrollment proves the caller holds the key they are
+presenting. It proves nothing about whose AID it is — anybody can generate a
+key, sign with it, and name somebody else's identifier.
 
-`/enroll` verifies the signature against the public key **supplied in the
-request**. That proves the caller holds the key it is presenting. It does *not*
-prove the key belongs to the AID being claimed, because doing so means resolving
-the AID's KEL and checking the current signing key — which this service does not
-do.
+The binding lives in the identity's own key event log. A self-addressing AID is
+the Blake3 SAID of its inception event, so an inception containing these keys
+either derives this AID or it does not; producing one that derives somebody
+else's means finding a hash collision.
 
-The practical consequence is **squatting, not interception**:
+**This service does not perform that check itself.** Getting KERI validation
+right means exact serialisation, exact hash inputs, and the same dummied fields
+the reference implementation uses. Reimplemented per service, that is several
+chances to differ subtly and fail in ways nobody can debug. So the KEL goes to a
+KERI service that already does it, and this service's job is to fetch honestly,
+ask, and refuse clearly.
 
-- Someone can claim an AID that is not theirs, if they get there first.
-- They cannot read anything as a result. Deposits are encrypted to the
-  recipient's key, and the deposit URL is handed out by the recipient
-  out of band — an attacker holding a token nobody uses receives nothing.
-- What they can do is **deny the real owner the use of this operator**, since a
-  second key for an existing AID is refused.
+```sh
+./mailbox -apex https://mailbox.example.org -keri-service https://keri.example.org
+```
 
-The fix is to resolve the enrolling AID's OOBI and require the presented key to
-match its current signing key, behind an SSRF guard. `sp-url-relay` has the same
-gap and the same fix, which is part of why it is worth doing once, properly,
-rather than twice.
+**It refuses to start without one.** Running unverified is a legitimate choice
+for development and a bad one to make by omission, so it must be said out loud:
+
+```sh
+./mailbox -apex http://localhost:8090 -allow-unverified-enrollment
+```
+
+That mode logs a warning on every enrollment, not just at startup.
+
+### What unverified enrollment costs
+
+Squatting, not interception. An attacker who claims an AID that isn't theirs:
+
+- **cannot read anything** — deposits are encrypted to the recipient, and the
+  deposit URL is handed out by the recipient out of band, so a token nobody uses
+  receives nothing;
+- **can deny the real owner** the use of this operator, since a second key for
+  an existing AID is refused.
+
+### Fetching a URL somebody else chose
+
+Resolving an OOBI means making an outbound connection to an address the caller
+supplied, from inside whatever network this service runs in. That is the shape
+of a server-side request forgery, so addresses are checked before anything is
+fetched — on the **resolved** addresses rather than the hostname, because a name
+is not a location and anybody can point a public domain at `127.0.0.1`.
+
+A host that cannot be resolved is refused rather than allowed. An unresolvable
+name is not evidence of safety.
 
 ## Running it
 
@@ -101,6 +129,8 @@ deposits.
 | `-aid` | `MAILBOX_AID` | — | this operator's own AID |
 | `-retention` | — | `720h` (30 days) | how long an uncollected message is kept |
 | `-trust-proxy` | `MAILBOX_TRUST_PROXY=1` | off | trust `X-Forwarded-For` |
+| `-keri-service` | `MAILBOX_KERI_SERVICE` | — | KERI service that confirms an enrolling key belongs to its AID |
+| `-allow-unverified-enrollment` | `MAILBOX_ALLOW_UNVERIFIED=1` | off | **development only**; accepts any key for any AID |
 
 **`-trust-proxy` only behind a proxy that sets the header itself.** Trusting it
 while directly exposed lets any caller forge a source address and walk straight
@@ -133,8 +163,12 @@ operator is configuration rather than a rebuild.
 
 ## Notes for maintainers
 
-`internal/sign` is a **copy** of the equivalent in `sp-url-relay`. The canonical
+`internal/sign` and `internal/oobi` are **copies** of the equivalents in
+`sp-url-relay`. The canonical
 form must agree byte for byte across every service or signatures fail, and two
-copies drifting produces `signature invalid` with no clue why. It should become
-a shared module rather than a copy per service — an architecture decision, not
-one to make here.
+copies drifting produces `signature invalid` with no clue why. The SSRF guard is
+worse: a rule tightened in one service and not the other is a gap nobody
+notices. Both should become shared modules rather than copies per service — an
+architecture decision, not one to make here.
+
+`sp-url-relay` still has the enrollment-binding gap this service no longer has.

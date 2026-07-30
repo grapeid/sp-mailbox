@@ -13,6 +13,7 @@ import (
 	"github.com/grapeid/sp-mailbox/internal/protocol"
 	"github.com/grapeid/sp-mailbox/internal/sign"
 	"github.com/grapeid/sp-mailbox/internal/store"
+	"github.com/grapeid/sp-mailbox/internal/verify"
 )
 
 // The HTTP surface.
@@ -31,6 +32,7 @@ type Server struct {
 	aid      string
 	retain   time.Duration
 	trustXFF bool
+	verifier verify.Verifier
 }
 
 type Config struct {
@@ -47,6 +49,10 @@ type Config struct {
 	// X-Forwarded-For itself. Trusting it when directly exposed lets any caller
 	// forge a source address and walk straight through the per-IP rate limit.
 	TrustProxyHeaders bool
+	// Verifier binds an enrolling key to its AID. When nil, enrollment accepts
+	// any key for any AID and the operator is open to squatting — which is a
+	// choice, but has to be an explicit one.
+	Verifier verify.Verifier
 }
 
 func New(cfg Config) *Server {
@@ -54,12 +60,17 @@ func New(cfg Config) *Server {
 	if retain <= 0 {
 		retain = protocol.DefaultRetention
 	}
+	v := cfg.Verifier
+	if v == nil {
+		v = verify.Unverified{}
+	}
 	return &Server{
 		store:    cfg.Store,
 		apex:     strings.TrimRight(cfg.Apex, "/"),
 		aid:      cfg.AID,
 		retain:   retain,
 		trustXFF: cfg.TrustProxyHeaders,
+		verifier: v,
 	}
 }
 
@@ -173,13 +184,30 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "could not canonicalise request")
 		return
 	}
-	// The key is taken from the request and checked against the signature over
-	// that same request. That proves the caller holds the key it is presenting;
-	// it does NOT prove the key belongs to the AID. Binding key to AID means
-	// resolving the AID's KEL, which this service does not do — see the README.
+	// First: the caller holds the key they are presenting.
 	if err := sign.VerifyEd25519(req.PublicKeyB64, req.Signature, body); err != nil {
 		writeErr(w, http.StatusUnauthorized, "signature did not verify: "+err.Error())
 		return
+	}
+
+	// Second, and the one that matters: the key belongs to the AID.
+	//
+	// The signature above proves possession of a key, which anybody can
+	// generate. It says nothing about whose identifier this is. Without the
+	// check below, an attacker can claim any AID they can name — not to read
+	// anything, since deposits are encrypted to the recipient, but to take the
+	// identifier and deny its real owner the use of this operator.
+	if s.verifier.Enabled() {
+		result := s.verifier.Verify(r.Context(), req.AID, req.OOBI, req.PublicKeyB64)
+		if !result.Verified {
+			writeErr(w, http.StatusForbidden,
+				"could not confirm this key belongs to that identity: "+result.Reason)
+			return
+		}
+	} else {
+		// Says so on every enrollment rather than only at startup. An operator
+		// running without verification should be reminded by its own logs.
+		s.verifier.Verify(r.Context(), req.AID, req.OOBI, req.PublicKeyB64)
 	}
 
 	enrollment, err := s.store.Enroll(req.AID, req.PublicKeyB64, req.OOBI)

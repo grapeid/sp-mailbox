@@ -15,6 +15,7 @@ import (
 	"github.com/grapeid/sp-mailbox/internal/api"
 	"github.com/grapeid/sp-mailbox/internal/protocol"
 	"github.com/grapeid/sp-mailbox/internal/store"
+	"github.com/grapeid/sp-mailbox/internal/verify"
 )
 
 func main() {
@@ -26,6 +27,11 @@ func main() {
 		retention = flag.Duration("retention", protocol.DefaultRetention, "how long an uncollected message is kept")
 		trustXFF  = flag.Bool("trust-proxy", os.Getenv("MAILBOX_TRUST_PROXY") == "1",
 			"trust X-Forwarded-For; only behind a proxy that sets it")
+		keriService = flag.String("keri-service", os.Getenv("MAILBOX_KERI_SERVICE"),
+			"KERI service used to confirm an enrolling key belongs to its AID")
+		allowUnverified = flag.Bool("allow-unverified-enrollment",
+			os.Getenv("MAILBOX_ALLOW_UNVERIFIED") == "1",
+			"accept enrollments without checking the key belongs to the AID (development only)")
 	)
 	flag.Parse()
 
@@ -36,6 +42,28 @@ func main() {
 		// redirect other people's deposits.
 		log.Fatal("-apex is required: it is the origin written into every deposit URL, " +
 			"and inferring it from request headers would let a caller redirect deposits")
+	}
+
+	// Refuse to run silently unverified.
+	//
+	// Without a KERI service there is no way to tell whether an enrolling key
+	// belongs to the AID it names, so anybody can take any identifier and lock
+	// its real owner out of this operator. That is a legitimate choice for
+	// development and a bad one to make by omission, so it has to be said out
+	// loud rather than being what happens when a flag is forgotten.
+	var verifier verify.Verifier = verify.Unverified{}
+	switch {
+	case *keriService != "":
+		verifier = verify.NewKeriService(*keriService)
+		log.Printf("[mailbox] enrollments verified against %s", *keriService)
+	case *allowUnverified:
+		log.Print("[mailbox] WARNING: running with unverified enrollment. Anyone can claim " +
+			"any AID and deny its real owner the use of this operator. Development only.")
+	default:
+		log.Fatal("refusing to start: without -keri-service there is no way to tell whether " +
+			"an enrolling key belongs to the AID it claims, so anybody could take any " +
+			"identifier. Pass -keri-service, or -allow-unverified-enrollment if this is " +
+			"a development instance")
 	}
 
 	st, err := store.Open(*dbPath)
@@ -50,6 +78,7 @@ func main() {
 		AID:               *aid,
 		Retention:         *retention,
 		TrustProxyHeaders: *trustXFF,
+		Verifier:          verifier,
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)

@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
@@ -14,6 +15,7 @@ import (
 	"github.com/grapeid/sp-mailbox/internal/protocol"
 	"github.com/grapeid/sp-mailbox/internal/sign"
 	"github.com/grapeid/sp-mailbox/internal/store"
+	"github.com/grapeid/sp-mailbox/internal/verify"
 )
 
 type identity struct {
@@ -388,5 +390,91 @@ func TestForwardedHeadersAreIgnoredUnlessTrusted(t *testing.T) {
 	trusting := New(Config{Store: st, Apex: "https://mailbox.test", TrustProxyHeaders: true})
 	if got := trusting.sourceAddr(r); got != "203.0.113.99" {
 		t.Errorf("behind a proxy the forwarded address should be used, got %q", got)
+	}
+}
+
+// stubVerifier stands in for a KERI service, so enrollment binding can be
+// tested without one running.
+type stubVerifier struct {
+	// bound maps AID to the key that genuinely belongs to it.
+	bound map[string]string
+}
+
+func (stubVerifier) Enabled() bool { return true }
+
+func (v stubVerifier) Verify(_ context.Context, aid, _, publicKeyB64 string) verify.Result {
+	real, ok := v.bound[aid]
+	if !ok {
+		return verify.Result{Reason: "no KEL published for that AID"}
+	}
+	if real != publicKeyB64 {
+		return verify.Result{Reason: "the key presented is not this identity's current signing key"}
+	}
+	return verify.Result{Verified: true, CurrentKey: real}
+}
+
+func serverWithVerifier(t *testing.T, bound map[string]string) *Server {
+	t.Helper()
+	st, err := store.Open(filepath.Join(t.TempDir(), "verified.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { st.Close() })
+	return New(Config{
+		Store: st, Apex: "https://mailbox.test", AID: "EMailboxOperator",
+		Verifier: stubVerifier{bound: bound},
+	})
+}
+
+// The attack T-263 exists to stop: holding a key proves possession, not
+// ownership of an identifier. Without binding, anybody can take any AID and
+// lock its real owner out of this operator.
+func TestAKeyThatDoesNotBelongToTheAIDIsRefused(t *testing.T) {
+	alice := newIdentity(t, "EAlice")
+	attacker := newIdentity(t, "EAlice") // same AID, their own key
+	s := serverWithVerifier(t, map[string]string{"EAlice": alice.pubB64()})
+
+	req := protocol.EnrollRequest{
+		V: protocol.JSONVersion, AID: "EAlice",
+		PublicKeyB64: attacker.pubB64(), OOBI: "https://attacker.test/oobi/EAlice",
+	}
+	// The signature is perfectly valid — over their own key.
+	attacker.signRequest(t, req, func(sig string) { req.Signature = sig })
+
+	w := post(t, s, "/enroll", req)
+	if w.Code != http.StatusForbidden {
+		t.Fatalf("an unbound key claimed an AID: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// The real owner still gets in.
+func TestTheRealOwnerEnrollsNormally(t *testing.T) {
+	alice := newIdentity(t, "EAlice")
+	s := serverWithVerifier(t, map[string]string{"EAlice": alice.pubB64()})
+
+	req := protocol.EnrollRequest{
+		V: protocol.JSONVersion, AID: "EAlice",
+		PublicKeyB64: alice.pubB64(), OOBI: "https://alice.test/oobi/EAlice",
+	}
+	alice.signRequest(t, req, func(sig string) { req.Signature = sig })
+
+	if w := post(t, s, "/enroll", req); w.Code != http.StatusOK {
+		t.Fatalf("the genuine owner was refused: %d %s", w.Code, w.Body.String())
+	}
+}
+
+// An AID with nothing published cannot be claimed either — "we could not check"
+// is a refusal, not an approval.
+func TestAnUncheckableAIDIsRefused(t *testing.T) {
+	stranger := newIdentity(t, "EUnknown")
+	s := serverWithVerifier(t, map[string]string{"EAlice": "somekey"})
+
+	req := protocol.EnrollRequest{
+		V: protocol.JSONVersion, AID: "EUnknown", PublicKeyB64: stranger.pubB64(),
+	}
+	stranger.signRequest(t, req, func(sig string) { req.Signature = sig })
+
+	if w := post(t, s, "/enroll", req); w.Code != http.StatusForbidden {
+		t.Fatalf("an unverifiable AID was accepted: %d", w.Code)
 	}
 }
