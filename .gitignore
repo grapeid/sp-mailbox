@@ -1,0 +1,11 @@
+# Build output
+/mailbox
+/bin/
+
+# Local state — a mailbox database holds other people's messages and must
+# never end up in the repository.
+*.db
+*.db-shm
+*.db-wal
+
+.DS_Store
