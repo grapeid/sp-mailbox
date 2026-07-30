@@ -163,12 +163,11 @@ operator is configuration rather than a rebuild.
 
 ## Notes for maintainers
 
-`internal/sign` and `internal/oobi` are **copies** of the equivalents in
-`sp-url-relay`. The canonical
-form must agree byte for byte across every service or signatures fail, and two
-copies drifting produces `signature invalid` with no clue why. The SSRF guard is
-worse: a rule tightened in one service and not the other is a gap nobody
-notices. Both should become shared modules rather than copies per service — an
-architecture decision, not one to make here.
+Canonical signing, the SSRF guard and key-to-identifier verification come from
+`github.com/grapeid/sp-common` rather than living here. They must behave
+identically across every service, and a copy per service is how that stops being
+true — the canonical form especially, since a one-character disagreement makes
+every signature fail with nothing pointing at why.
 
-`sp-url-relay` still has the enrollment-binding gap this service no longer has.
+That module is private, so builds need `GOPRIVATE=github.com/grapeid/*` and
+credentials that can read it.

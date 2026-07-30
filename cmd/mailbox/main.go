@@ -15,7 +15,7 @@ import (
 	"github.com/grapeid/sp-mailbox/internal/api"
 	"github.com/grapeid/sp-mailbox/internal/protocol"
 	"github.com/grapeid/sp-mailbox/internal/store"
-	"github.com/grapeid/sp-mailbox/internal/verify"
+	"github.com/grapeid/sp-common/verify"
 )
 
 func main() {

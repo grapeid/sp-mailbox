@@ -11,9 +11,9 @@ import (
 	"time"
 
 	"github.com/grapeid/sp-mailbox/internal/protocol"
-	"github.com/grapeid/sp-mailbox/internal/sign"
+	"github.com/grapeid/sp-common/sign"
 	"github.com/grapeid/sp-mailbox/internal/store"
-	"github.com/grapeid/sp-mailbox/internal/verify"
+	"github.com/grapeid/sp-common/verify"
 )
 
 // The HTTP surface.
