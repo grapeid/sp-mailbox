@@ -9,3 +9,7 @@
 *.db-wal
 
 .DS_Store
+
+# Agent instruction files are local to each contributor
+AGENTS.md
+CLAUDE.md

@@ -138,6 +138,18 @@ through the per-IP rate limit.
 
 ## Protocol
 
+This is one operator's implementation of the mailbox service an Identity Agent
+uses to be reached while it is offline. The Identity Agent is open source at
+[identity-bot](https://github.com/LF-Decentralized-Trust-labs/identity-bot), and
+the network roles it relies on — witness, watcher, relay and the services around
+them — are described in its ADR-024 (*KERI Network Participation*). Signed
+requests use the same canonical form as the relay: Ed25519 over the JSON body
+with keys sorted and the `signature` field removed, as ADR-024 describes. The
+mailbox wire format itself is defined by this repository; the body version string
+is `IAMAILBOX10JSON`.
+
+Anybody may run this service. An agent is not tied to one operator.
+
 An agent reads `/.well-known/mailbox-service.json` and needs nothing else — the
 descriptor carries every endpoint and limit, so switching to a different
 operator is configuration rather than a rebuild.
@@ -169,5 +181,9 @@ identically across every service, and a copy per service is how that stops being
 true — the canonical form especially, since a one-character disagreement makes
 every signature fail with nothing pointing at why.
 
-That module is private, so builds need `GOPRIVATE=github.com/grapeid/*` and
-credentials that can read it.
+It is fetched like any other public Go module; no extra configuration is needed.
+
+## Licence
+
+Apache License 2.0 — see `LICENSE`. Contributions require a DCO sign-off; see
+`CONTRIBUTING.md`. To report a vulnerability, see `SECURITY.md`.
