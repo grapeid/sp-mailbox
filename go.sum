@@ -1,5 +1,5 @@
-github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261022001345-7d7ac19ad512 h1:stoK/45+HYcEW9KkclGwrwD3CBFADx9WgHvLZ4jLLSE=
-github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261022001345-7d7ac19ad512/go.mod h1:SyJvK6o5aYufFS56KL5hJBBXjJZSGnjMppgifgazsIw=
+github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261022154728-134689791b1a h1:lQhzZGi6Oh335wgje4UwXUuLLunNIJz5HGdeatCn/ms=
+github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261022154728-134689791b1a/go.mod h1:SyJvK6o5aYufFS56KL5hJBBXjJZSGnjMppgifgazsIw=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e h1:ijClszYn+mADRFY17kjQEVQ1XRhq2/JR1M3sGqeJoxs=
