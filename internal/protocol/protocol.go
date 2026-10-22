@@ -32,6 +32,10 @@ import "time"
 // that no single one sees a whole conversation, which is why the registry an
 // agent draws from is meant to grow.
 
+// SignedRequestWindow is how far a signed request's time may be from the
+// mailbox's.
+const SignedRequestWindow = 2 * time.Minute
+
 const (
 	Version     = "1.1"
 	JSONVersion = "IAMAILBOX11JSON"
@@ -137,7 +141,12 @@ type CollectRequest struct {
 	AID string `json:"aid"`
 	// Limit is a decimal count, carried as a string because every signed
 	// field is a string (the Identity Agent's ADR-049).
-	Limit     string `json:"limit,omitempty"`
+	Limit string `json:"limit,omitempty"`
+	// Nonce and T make a captured request useless: the mailbox refuses a
+	// request whose time is outside SignedRequestWindow, or whose nonce it
+	// has already seen.
+	Nonce     string `json:"nonce"`
+	T         string `json:"t"`
 	Signature string `json:"signature"`
 }
 
@@ -168,7 +177,12 @@ type AckRequest struct {
 	// MessageIDs are separated by single spaces: one string, because every
 	// signed field is a string (the Identity Agent's ADR-049).
 	MessageIDs string `json:"message_ids"`
-	Signature  string `json:"signature"`
+	// Nonce and T make a captured request useless: the mailbox refuses a
+	// request whose time is outside SignedRequestWindow, or whose nonce it
+	// has already seen.
+	Nonce     string `json:"nonce"`
+	T         string `json:"t"`
+	Signature string `json:"signature"`
 }
 
 type AckResponse struct {
@@ -177,7 +191,12 @@ type AckResponse struct {
 
 // ReleaseRequest gives up a mailbox and destroys what is in it.
 type ReleaseRequest struct {
-	V         string `json:"v"`
-	AID       string `json:"aid"`
+	V   string `json:"v"`
+	AID string `json:"aid"`
+	// Nonce and T make a captured request useless: the mailbox refuses a
+	// request whose time is outside SignedRequestWindow, or whose nonce it
+	// has already seen.
+	Nonce     string `json:"nonce"`
+	T         string `json:"t"`
 	Signature string `json:"signature"`
 }

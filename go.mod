@@ -3,13 +3,13 @@ module github.com/grapeid/sp-mailbox
 go 1.25.0
 
 require (
+	github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261022001345-7d7ac19ad512
 	github.com/grapeid/keri-go v0.1.5
-	github.com/grapeid/sp-common v0.0.0-20261022000112-1ea40f86e94d
+	github.com/grapeid/sp-common v0.0.0-20261022001445-5f29d1407291
 	modernc.org/sqlite v1.46.1
 )
 
 require (
-	github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261021235759-8584054dd939 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/gorilla/websocket v1.5.3 // indirect

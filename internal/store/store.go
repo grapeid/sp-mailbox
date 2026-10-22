@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	_ "modernc.org/sqlite"
@@ -33,6 +34,7 @@ type Enrollment struct {
 	AID          string
 	PublicKeyB64 string
 	OOBI         string
+	KEL          string // the signed key event log it was checked against, base64url
 	DepositToken string
 	CreatedAt    time.Time
 	LastSeenAt   time.Time
@@ -103,11 +105,62 @@ CREATE TABLE IF NOT EXISTS rate_buckets (
     minute     INTEGER NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_rate_minute ON rate_buckets(minute);
+
+-- A signed request's nonce, kept until its time window has passed, so a
+-- captured request cannot be replayed. Stored as a digest of identifier and
+-- nonce, never the request.
+CREATE TABLE IF NOT EXISTS used_nonces (
+    digest  TEXT PRIMARY KEY,
+    expires INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_used_nonces_expires ON used_nonces(expires);
 `)
 	if err != nil {
 		return fmt.Errorf("migrate: %w", err)
 	}
+	// The key event log an enrolment was checked against. Added after the
+	// first schema, so an existing database gains it here.
+	if _, err := s.db.Exec(`ALTER TABLE enrollments ADD COLUMN kel TEXT NOT NULL DEFAULT ''`); err != nil &&
+		!strings.Contains(err.Error(), "duplicate column") {
+		return fmt.Errorf("migrate: %w", err)
+	}
 	return nil
+}
+
+// UseNonce records a signed request's nonce until expires and reports whether
+// it was fresh. A nonce seen before is a replay.
+func (s *Store) UseNonce(digest string, expires time.Time) (bool, error) {
+	if _, err := s.db.Exec(`DELETE FROM used_nonces WHERE expires < ?`, time.Now().Unix()); err != nil {
+		return false, err
+	}
+	res, err := s.db.Exec(`INSERT OR IGNORE INTO used_nonces (digest, expires) VALUES (?, ?)`, digest, expires.Unix())
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	return n == 1, err
+}
+
+// ReplaceKey moves an enrolment to the key a newer key event log names, after
+// the identity rotated. The caller has checked that the log is the identity's
+// and extends the one held; the mailbox and its deposit token stay the same.
+func (s *Store) ReplaceKey(aid, publicKeyB64, kel string) error {
+	res, err := s.db.Exec(`UPDATE enrollments SET public_key_b64 = ?, kel = ?, last_seen_at = ? WHERE aid = ?`,
+		publicKeyB64, kel, time.Now().UTC().Format(time.RFC3339), aid)
+	if err != nil {
+		return err
+	}
+	if n, _ := res.RowsAffected(); n != 1 {
+		return fmt.Errorf("no mailbox for that AID")
+	}
+	return nil
+}
+
+// KeepKEL records a newer key event log for the same key: one that gained
+// events that did not rotate it, such as an interaction.
+func (s *Store) KeepKEL(aid, kel string) error {
+	_, err := s.db.Exec(`UPDATE enrollments SET kel = ? WHERE aid = ?`, kel, aid)
+	return err
 }
 
 func newToken() (string, error) {
@@ -124,7 +177,7 @@ func newToken() (string, error) {
 // should get its mailbox back, not a second one. A DIFFERENT key for an AID
 // already here is refused — that is either a mistake or somebody trying to take
 // over a mailbox, and neither should be handled by overwriting.
-func (s *Store) Enroll(aid, publicKeyB64, oobi string) (*Enrollment, error) {
+func (s *Store) Enroll(aid, publicKeyB64, oobi, kel string) (*Enrollment, error) {
 	now := time.Now().UTC()
 
 	var existingKey, existingToken string
@@ -137,7 +190,7 @@ func (s *Store) Enroll(aid, publicKeyB64, oobi string) (*Enrollment, error) {
 		}
 		s.db.Exec(`UPDATE enrollments SET last_seen_at = ? WHERE aid = ?`, now.Format(time.RFC3339), aid)
 		return &Enrollment{
-			AID: aid, PublicKeyB64: existingKey, OOBI: oobi,
+			AID: aid, PublicKeyB64: existingKey, OOBI: oobi, KEL: kel,
 			DepositToken: existingToken, LastSeenAt: now,
 		}, nil
 	}
@@ -150,14 +203,14 @@ func (s *Store) Enroll(aid, publicKeyB64, oobi string) (*Enrollment, error) {
 		return nil, err
 	}
 	_, err = s.db.Exec(
-		`INSERT INTO enrollments (aid, public_key_b64, oobi, deposit_token, created_at, last_seen_at)
-		 VALUES (?, ?, ?, ?, ?, ?)`,
-		aid, publicKeyB64, oobi, token, now.Format(time.RFC3339), now.Format(time.RFC3339))
+		`INSERT INTO enrollments (aid, public_key_b64, oobi, kel, deposit_token, created_at, last_seen_at)
+		 VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		aid, publicKeyB64, oobi, kel, token, now.Format(time.RFC3339), now.Format(time.RFC3339))
 	if err != nil {
 		return nil, fmt.Errorf("enroll: %w", err)
 	}
 	return &Enrollment{
-		AID: aid, PublicKeyB64: publicKeyB64, OOBI: oobi,
+		AID: aid, PublicKeyB64: publicKeyB64, OOBI: oobi, KEL: kel,
 		DepositToken: token, CreatedAt: now, LastSeenAt: now,
 	}, nil
 }
@@ -181,9 +234,9 @@ func (s *Store) enrollmentWhere(clause string, arg string) (*Enrollment, error) 
 	var e Enrollment
 	var created, lastSeen string
 	err := s.db.QueryRow(
-		`SELECT aid, public_key_b64, oobi, deposit_token, created_at, last_seen_at
+		`SELECT aid, public_key_b64, oobi, kel, deposit_token, created_at, last_seen_at
 		 FROM enrollments WHERE `+clause, arg,
-	).Scan(&e.AID, &e.PublicKeyB64, &e.OOBI, &e.DepositToken, &created, &lastSeen)
+	).Scan(&e.AID, &e.PublicKeyB64, &e.OOBI, &e.KEL, &e.DepositToken, &created, &lastSeen)
 	if err == sql.ErrNoRows {
 		return nil, nil
 	}

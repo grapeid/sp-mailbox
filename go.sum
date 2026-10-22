@@ -1,5 +1,5 @@
-github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261021235759-8584054dd939 h1:P04q1nu1cHMcmHzA4CH4hHR1r7NrzF3l6rZV8FKEb1c=
-github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261021235759-8584054dd939/go.mod h1:SyJvK6o5aYufFS56KL5hJBBXjJZSGnjMppgifgazsIw=
+github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261022001345-7d7ac19ad512 h1:stoK/45+HYcEW9KkclGwrwD3CBFADx9WgHvLZ4jLLSE=
+github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto v0.0.0-20261022001345-7d7ac19ad512/go.mod h1:SyJvK6o5aYufFS56KL5hJBBXjJZSGnjMppgifgazsIw=
 github.com/dustin/go-humanize v1.0.1 h1:GzkhY7T5VNhEkwH0PVJgjz+fX1rhBrR7pRT3mDkpeCY=
 github.com/dustin/go-humanize v1.0.1/go.mod h1:Mu1zIs6XwVuF/gI1OepvI0qD18qycQx+mFykh5fBlto=
 github.com/google/pprof v0.0.0-20250317173921-a4b03ec1a45e h1:ijClszYn+mADRFY17kjQEVQ1XRhq2/JR1M3sGqeJoxs=
@@ -10,8 +10,8 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/grapeid/keri-go v0.1.5 h1:/HCHgbQbJ+HP/cHIe0DyxLXMnBC8gK3Z2sz0rseltGA=
 github.com/grapeid/keri-go v0.1.5/go.mod h1:Gypsr09J5eYiw9vpimQrE8nn9UolBOv0HkkrdNynLYg=
-github.com/grapeid/sp-common v0.0.0-20261022000112-1ea40f86e94d h1:HNPDotnJwKO+lNprLh3yXidGJG3mOzFrlsq5diniSbQ=
-github.com/grapeid/sp-common v0.0.0-20261022000112-1ea40f86e94d/go.mod h1:fXWCKz6H8zqvkiLGU+aGZnbygBEyipq1umTbukrQZx4=
+github.com/grapeid/sp-common v0.0.0-20261022001445-5f29d1407291 h1:kOl/VmNx65WHpkB+NwnnkFlvKoIXFiI1O16NhBDCEZ4=
+github.com/grapeid/sp-common v0.0.0-20261022001445-5f29d1407291/go.mod h1:hc36ol6f2iNm1Q2qCejQCzxY+Pacpp165w8KSqERUIM=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hashicorp/yamux v0.1.2 h1:XtB8kyFOyHXYVFnwT5C3+Bdo8gArse7j2AQ0DA0Uey8=

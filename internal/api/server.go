@@ -1,6 +1,10 @@
 package api
 
 import (
+	"crypto/ed25519"
+	"crypto/sha256"
+	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -11,10 +15,11 @@ import (
 	"strings"
 	"time"
 
-	"github.com/grapeid/sp-mailbox/internal/protocol"
+	"github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto"
 	"github.com/grapeid/sp-common/sign"
-	"github.com/grapeid/sp-mailbox/internal/store"
 	"github.com/grapeid/sp-common/verify"
+	"github.com/grapeid/sp-mailbox/internal/protocol"
+	"github.com/grapeid/sp-mailbox/internal/store"
 )
 
 // The HTTP surface.
@@ -171,18 +176,25 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req protocol.EnrollRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, "body is not valid JSON")
+	fields, err := decodeSigned(raw, &req)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if req.AID == "" || req.PublicKeyB64 == "" || req.Signature == "" {
+	if req.AID == "" || req.PublicKeyB64 == "" || req.KEL == "" || req.Signature == "" {
 		writeErr(w, http.StatusBadRequest, "aid, public_key_b64, kel and signature are required")
 		return
 	}
-
-	body, err := sign.CanonicalBody(req)
+	presented, err := rawKey(req.PublicKeyB64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "could not canonicalise request")
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	// Signed over exactly what was sent, not a re-encoding of it: a field the
+	// client included and a struct would have dropped still counts.
+	body, err := sign.CanonicalBody(fields)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "could not canonicalise request: "+err.Error())
 		return
 	}
 	// First: the caller holds the key they are presenting.
@@ -198,6 +210,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	// check below, an attacker can claim any AID they can name — not to read
 	// anything, since deposits are encrypted to the recipient, but to take the
 	// identifier and deny its real owner the use of this operator.
+	verified := false
 	if s.verifier.Enabled() {
 		result := s.verifier.Verify(req.AID, req.KEL, req.PublicKeyB64)
 		if !result.Verified {
@@ -205,15 +218,49 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 				"could not confirm this key belongs to that identity: "+result.Reason)
 			return
 		}
+		verified = true
 	} else {
 		// Says so on every enrollment rather than only at startup. An operator
 		// running without verification should be reminded by its own logs.
 		s.verifier.Verify(req.AID, req.KEL, req.PublicKeyB64)
 	}
 
-	enrollment, err := s.store.Enroll(req.AID, req.PublicKeyB64, req.OOBI)
+	key := base64.StdEncoding.EncodeToString(presented)
+	existing, err := s.store.EnrollmentByAID(req.AID)
 	if err != nil {
-		writeErr(w, http.StatusConflict, err.Error())
+		writeErr(w, http.StatusInternalServerError, "could not look up the mailbox")
+		return
+	}
+	var enrollment *store.Enrollment
+	switch {
+	case existing == nil:
+		enrollment, err = s.store.Enroll(req.AID, key, req.OOBI, req.KEL)
+		if err != nil {
+			writeErr(w, http.StatusConflict, err.Error())
+			return
+		}
+	case sameKey(existing.PublicKeyB64, presented):
+		// The same key again, after a restart: the same mailbox. A newer log
+		// for it is kept, so a later rotation is checked against the newest.
+		if verified && extendsHeld(req.KEL, existing.KEL) {
+			_ = s.store.KeepKEL(req.AID, req.KEL)
+		}
+		enrollment = existing
+	case verified && existing.KEL != "" && extendsHeld(req.KEL, existing.KEL):
+		// The identity rotated. Its newer log extends the one this mailbox
+		// holds and names the presented key now, so the key moves and the old
+		// one stops working. The mailbox and its deposit token stay.
+		if err := s.store.ReplaceKey(req.AID, key, req.KEL); err != nil {
+			writeErr(w, http.StatusInternalServerError, "could not follow the rotation")
+			return
+		}
+		existing.PublicKeyB64, existing.KEL = key, req.KEL
+		enrollment = existing
+	default:
+		// A different key with no log that extends the one held is either a
+		// mistake or somebody trying to take over a mailbox. Neither is
+		// handled by overwriting.
+		writeErr(w, http.StatusConflict, "this AID is already enrolled with a different key, and no newer key event log moves it")
 		return
 	}
 	writeJSON(w, http.StatusOK, protocol.EnrollResponse{
@@ -307,10 +354,23 @@ func (s *Server) handleDeposit(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// authenticate verifies a signed request against the enrolled key for its AID.
-func (s *Server) authenticate(aid, signature string, req interface{}) (*store.Enrollment, error) {
+// authenticate verifies a signed request against the enrolled key for its AID:
+// over exactly the fields that were sent, fresh in time, and never seen before.
+func (s *Server) authenticate(aid, signature string, fields map[string]interface{}) (*store.Enrollment, error) {
 	if aid == "" || signature == "" {
 		return nil, fmt.Errorf("aid and signature are required")
+	}
+	nonce, _ := fields["nonce"].(string)
+	t, _ := fields["t"].(string)
+	if nonce == "" || t == "" {
+		return nil, fmt.Errorf("nonce and t are required, so a captured request cannot be replayed")
+	}
+	at, err := time.Parse(time.RFC3339, t)
+	if err != nil {
+		return nil, fmt.Errorf("t is not an RFC 3339 time")
+	}
+	if d := time.Since(at); d > protocol.SignedRequestWindow || d < -protocol.SignedRequestWindow {
+		return nil, fmt.Errorf("the request's time is more than %s from the mailbox's; sign a new one", protocol.SignedRequestWindow)
 	}
 	enrollment, err := s.store.EnrollmentByAID(aid)
 	if err != nil {
@@ -319,16 +379,74 @@ func (s *Server) authenticate(aid, signature string, req interface{}) (*store.En
 	if enrollment == nil {
 		return nil, fmt.Errorf("no mailbox for that AID")
 	}
-	body, err := sign.CanonicalBody(req)
+	body, err := sign.CanonicalBody(fields)
 	if err != nil {
-		return nil, fmt.Errorf("could not canonicalise request")
+		return nil, fmt.Errorf("could not canonicalise request: %w", err)
 	}
 	// Against the ENROLLED key, not one supplied with the request. Trusting a
 	// key from the request would let anybody sign their own way in.
 	if err := sign.VerifyEd25519(enrollment.PublicKeyB64, signature, body); err != nil {
 		return nil, fmt.Errorf("signature did not verify: %w", err)
 	}
+	// Recorded only once it verified, so nobody can burn another's nonce.
+	digest := sha256.Sum256([]byte(aid + " " + nonce))
+	fresh, err := s.store.UseNonce(hex.EncodeToString(digest[:]), at.Add(protocol.SignedRequestWindow))
+	if err != nil {
+		return nil, fmt.Errorf("could not record the request")
+	}
+	if !fresh {
+		return nil, fmt.Errorf("this request has been seen before; sign a new one")
+	}
 	return enrollment, nil
+}
+
+// decodeSigned reads a request into v and also returns its fields exactly as
+// sent, which is what the signature covers. A request in another version of
+// this protocol is refused in plain words.
+func decodeSigned(raw []byte, v interface{}) (map[string]interface{}, error) {
+	var fields map[string]interface{}
+	if err := json.Unmarshal(raw, &fields); err != nil {
+		return nil, fmt.Errorf("body is not a JSON object")
+	}
+	if got, _ := fields["v"].(string); got != protocol.JSONVersion {
+		return nil, fmt.Errorf("this mailbox speaks %s; the request says %q", protocol.JSONVersion, got)
+	}
+	if err := json.Unmarshal(raw, v); err != nil {
+		return nil, fmt.Errorf("body does not match this request: %v", err)
+	}
+	return fields, nil
+}
+
+// rawKey reads a base64 Ed25519 public key in any common spelling.
+func rawKey(b64 string) ([]byte, error) {
+	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
+		if raw, err := enc.DecodeString(b64); err == nil && len(raw) == ed25519.PublicKeySize {
+			return raw, nil
+		}
+	}
+	return nil, fmt.Errorf("public_key_b64 is not a base64 Ed25519 key")
+}
+
+// sameKey compares keys as bytes: the same key in two base64 spellings is the
+// same key.
+func sameKey(storedB64 string, presented []byte) bool {
+	held, err := rawKey(storedB64)
+	return err == nil && ed25519.PublicKey(held).Equal(ed25519.PublicKey(presented))
+}
+
+// extendsHeld reports whether a presented key event log extends the one held,
+// by relayproto's rule: every held event, in order, compared as keri-go reads
+// them. A log that rewrites history extends nothing.
+func extendsHeld(presentedB64, heldB64 string) bool {
+	presented, err := base64.RawURLEncoding.DecodeString(presentedB64)
+	if err != nil {
+		return false
+	}
+	held, err := base64.RawURLEncoding.DecodeString(heldB64)
+	if err != nil {
+		return false
+	}
+	return relayproto.LogExtends(presented, held)
 }
 
 // handleCollect returns waiting messages to their owner, without deleting them.
@@ -343,15 +461,16 @@ func (s *Server) handleCollect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req protocol.CollectRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, "body is not valid JSON")
+	fields, err := decodeSigned(raw, &req)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	if ok, _ := s.store.Allow("collect:"+req.AID, protocol.CollectPerMinute); !ok {
 		writeErr(w, http.StatusTooManyRequests, "too many collections")
 		return
 	}
-	if _, err := s.authenticate(req.AID, req.Signature, req); err != nil {
+	if _, err := s.authenticate(req.AID, req.Signature, fields); err != nil {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
 	}
@@ -405,11 +524,12 @@ func (s *Server) handleAck(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req protocol.AckRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, "body is not valid JSON")
+	fields, err := decodeSigned(raw, &req)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if _, err := s.authenticate(req.AID, req.Signature, req); err != nil {
+	if _, err := s.authenticate(req.AID, req.Signature, fields); err != nil {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
 	}
@@ -433,11 +553,12 @@ func (s *Server) handleRelease(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var req protocol.ReleaseRequest
-	if err := json.Unmarshal(raw, &req); err != nil {
-		writeErr(w, http.StatusBadRequest, "body is not valid JSON")
+	fields, err := decodeSigned(raw, &req)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	if _, err := s.authenticate(req.AID, req.Signature, req); err != nil {
+	if _, err := s.authenticate(req.AID, req.Signature, fields); err != nil {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
 	}

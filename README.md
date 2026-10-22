@@ -99,7 +99,30 @@ Every signed request is signed over the Identity Agent's one canonical form
 (ADR-049): string fields of printable ASCII, keys sorted, no HTML escaping, the
 `signature` field left out. So a collect request's `limit` is a decimal string
 (`"limit": "50"`), and an acknowledgement's `message_ids` is one string with the
-ids separated by single spaces. A number or a list is refused.
+ids separated by single spaces. A number or a list is refused. The signature is
+checked over the fields exactly as sent, so a field a client includes counts
+even when it is empty.
+
+### A signed request cannot be replayed
+
+Collect, acknowledge and release each carry a `nonce` and a time `t` (RFC 3339),
+both signed. The mailbox refuses a request whose time is more than two minutes
+from its own, and keeps each nonce (as a digest of identifier and nonce) until
+that window has passed, refusing one it has seen. A nonce is recorded only after
+the signature verifies, so nobody can spend somebody else's.
+
+### A rotated key keeps its mailbox
+
+An identity that rotates enrols again with its new key and its newer key event
+log. When that log extends the one the mailbox holds (every held event, in
+order, as keri-go reads them) and names the new key, the mailbox moves to the
+new key and keeps its deposit token; the old key stops working at once. Keys are
+compared as bytes, so the same key in another base64 spelling is the same key.
+
+### One protocol version
+
+Every request carries `v`. A request in any other version is refused, saying
+which version this mailbox speaks.
 
 ## Running it
 

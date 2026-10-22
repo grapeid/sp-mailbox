@@ -3,6 +3,7 @@ package api
 import (
 	"bytes"
 	"crypto/ed25519"
+	"crypto/rand"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
@@ -12,10 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/grapeid/sp-mailbox/internal/protocol"
 	"github.com/grapeid/sp-common/sign"
-	"github.com/grapeid/sp-mailbox/internal/store"
 	"github.com/grapeid/sp-common/verify"
+	"github.com/grapeid/sp-mailbox/internal/protocol"
+	"github.com/grapeid/sp-mailbox/internal/store"
 )
 
 type identity struct {
@@ -46,6 +47,15 @@ func (i identity) signRequest(t *testing.T, req interface{}, set func(sig string
 	set(base64.StdEncoding.EncodeToString(ed25519.Sign(i.priv, body)))
 }
 
+// nonce and now give each signed request what makes it unreplayable.
+func nonce() string {
+	b := make([]byte, 12)
+	rand.Read(b)
+	return base64.RawURLEncoding.EncodeToString(b)
+}
+
+func now() string { return time.Now().UTC().Format(time.RFC3339) }
+
 func newTestServer(t *testing.T) (*Server, *store.Store) {
 	t.Helper()
 	st, err := store.Open(filepath.Join(t.TempDir(), "test.db"))
@@ -68,7 +78,7 @@ func post(t *testing.T, s *Server, path string, body interface{}) *httptest.Resp
 
 func enroll(t *testing.T, s *Server, id identity) protocol.EnrollResponse {
 	t.Helper()
-	req := protocol.EnrollRequest{V: protocol.JSONVersion, AID: id.aid, PublicKeyB64: id.pubB64()}
+	req := protocol.EnrollRequest{V: protocol.JSONVersion, AID: id.aid, PublicKeyB64: id.pubB64(), KEL: "unchecked"}
 	id.signRequest(t, req, func(sig string) { req.Signature = sig })
 
 	w := post(t, s, "/enroll", req)
@@ -105,7 +115,7 @@ func TestEnrollWithAWrongSignatureIsRefused(t *testing.T) {
 	s, _ := newTestServer(t)
 	alice, mallory := newIdentity(t, "EAlice"), newIdentity(t, "EMallory")
 
-	req := protocol.EnrollRequest{V: protocol.JSONVersion, AID: alice.aid, PublicKeyB64: alice.pubB64()}
+	req := protocol.EnrollRequest{V: protocol.JSONVersion, AID: alice.aid, PublicKeyB64: alice.pubB64(), KEL: "unchecked"}
 	// Mallory signs a claim on Alice's AID with Alice's key advertised.
 	mallory.signRequest(t, req, func(sig string) { req.Signature = sig })
 
@@ -132,7 +142,7 @@ func TestADifferentKeyCannotTakeOverAMailbox(t *testing.T) {
 	enroll(t, s, newIdentity(t, "EAlice"))
 
 	attacker := newIdentity(t, "EAlice") // same AID, different key
-	req := protocol.EnrollRequest{V: protocol.JSONVersion, AID: "EAlice", PublicKeyB64: attacker.pubB64()}
+	req := protocol.EnrollRequest{V: protocol.JSONVersion, AID: "EAlice", PublicKeyB64: attacker.pubB64(), KEL: "unchecked"}
 	attacker.signRequest(t, req, func(sig string) { req.Signature = sig })
 
 	if w := post(t, s, "/enroll", req); w.Code == http.StatusOK {
@@ -158,7 +168,7 @@ func TestCollectingWithoutASignatureIsRefused(t *testing.T) {
 	s, _ := newTestServer(t)
 	enroll(t, s, newIdentity(t, "EAlice"))
 
-	w := post(t, s, "/collect", protocol.CollectRequest{V: protocol.JSONVersion, AID: "EAlice"})
+	w := post(t, s, "/collect", protocol.CollectRequest{V: protocol.JSONVersion, AID: "EAlice", Nonce: nonce(), T: now()})
 	if w.Code != http.StatusUnauthorized {
 		t.Fatalf("an unsigned collection returned %d, expected 401", w.Code)
 	}
@@ -175,7 +185,7 @@ func TestOneIdentityCannotCollectAnothersMail(t *testing.T) {
 		V: protocol.JSONVersion, DepositToken: claim.DepositToken, Envelope: sampleEnvelope()})
 
 	mallory := newIdentity(t, "EMallory")
-	req := protocol.CollectRequest{V: protocol.JSONVersion, AID: "EAlice"}
+	req := protocol.CollectRequest{V: protocol.JSONVersion, AID: "EAlice", Nonce: nonce(), T: now()}
 	mallory.signRequest(t, req, func(sig string) { req.Signature = sig })
 
 	if w := post(t, s, "/collect", req); w.Code == http.StatusOK {
@@ -197,7 +207,7 @@ func TestTheFullRoundTrip(t *testing.T) {
 		}
 	}
 
-	collectReq := protocol.CollectRequest{V: protocol.JSONVersion, AID: alice.aid}
+	collectReq := protocol.CollectRequest{V: protocol.JSONVersion, AID: alice.aid, Nonce: nonce(), T: now()}
 	alice.signRequest(t, collectReq, func(sig string) { collectReq.Signature = sig })
 	w := post(t, s, "/collect", collectReq)
 	if w.Code != http.StatusOK {
@@ -211,6 +221,7 @@ func TestTheFullRoundTrip(t *testing.T) {
 
 	// Collecting again must still return them: nothing is dropped until the
 	// recipient says it has them.
+	collectReq.Nonce = nonce()
 	alice.signRequest(t, collectReq, func(sig string) { collectReq.Signature = sig })
 	w = post(t, s, "/collect", collectReq)
 	var again protocol.CollectResponse
@@ -223,13 +234,14 @@ func TestTheFullRoundTrip(t *testing.T) {
 	for _, m := range collected.Messages {
 		ids = append(ids, m.MessageID)
 	}
-	ackReq := protocol.AckRequest{V: protocol.JSONVersion, AID: alice.aid, MessageIDs: strings.Join(ids, " ")}
+	ackReq := protocol.AckRequest{V: protocol.JSONVersion, AID: alice.aid, MessageIDs: strings.Join(ids, " "), Nonce: nonce(), T: now()}
 	alice.signRequest(t, ackReq, func(sig string) { ackReq.Signature = sig })
 	w = post(t, s, "/ack", ackReq)
 	if w.Code != http.StatusOK {
 		t.Fatalf("ack failed: %s", w.Body.String())
 	}
 
+	collectReq.Nonce = nonce()
 	alice.signRequest(t, collectReq, func(sig string) { collectReq.Signature = sig })
 	w = post(t, s, "/collect", collectReq)
 	var empty protocol.CollectResponse
@@ -252,7 +264,7 @@ func TestAckIsScopedToTheOwner(t *testing.T) {
 	mallory := newIdentity(t, "EMallory")
 	enroll(t, s, mallory)
 	ackReq := protocol.AckRequest{
-		V: protocol.JSONVersion, AID: mallory.aid, MessageIDs: deposited.MessageID}
+		V: protocol.JSONVersion, AID: mallory.aid, MessageIDs: deposited.MessageID, Nonce: nonce(), T: now()}
 	mallory.signRequest(t, ackReq, func(sig string) { ackReq.Signature = sig })
 
 	w = post(t, s, "/ack", ackReq)
@@ -305,7 +317,7 @@ func TestReleaseDestroysTheMailbox(t *testing.T) {
 	post(t, s, "/deposit", protocol.DepositRequest{
 		V: protocol.JSONVersion, DepositToken: claim.DepositToken, Envelope: sampleEnvelope()})
 
-	req := protocol.ReleaseRequest{V: protocol.JSONVersion, AID: alice.aid}
+	req := protocol.ReleaseRequest{V: protocol.JSONVersion, AID: alice.aid, Nonce: nonce(), T: now()}
 	alice.signRequest(t, req, func(sig string) { req.Signature = sig })
 	if w := post(t, s, "/release", req); w.Code != http.StatusOK {
 		t.Fatalf("release failed: %s", w.Body.String())
@@ -328,7 +340,7 @@ func TestExpiredMessagesAreSwept(t *testing.T) {
 	}
 	defer st.Close()
 
-	if _, err := st.Enroll("EAlice", "cHVi", ""); err != nil {
+	if _, err := st.Enroll("EAlice", "cHVi", "", ""); err != nil {
 		t.Fatal(err)
 	}
 	// Negative retention: already expired when written.
@@ -436,7 +448,7 @@ func TestAKeyThatDoesNotBelongToTheAIDIsRefused(t *testing.T) {
 
 	req := protocol.EnrollRequest{
 		V: protocol.JSONVersion, AID: "EAlice",
-		PublicKeyB64: attacker.pubB64(), OOBI: "https://attacker.test/oobi/EAlice",
+		PublicKeyB64: attacker.pubB64(), OOBI: "https://attacker.test/oobi/EAlice", KEL: "stub",
 	}
 	// The signature is perfectly valid — over their own key.
 	attacker.signRequest(t, req, func(sig string) { req.Signature = sig })
@@ -454,7 +466,7 @@ func TestTheRealOwnerEnrollsNormally(t *testing.T) {
 
 	req := protocol.EnrollRequest{
 		V: protocol.JSONVersion, AID: "EAlice",
-		PublicKeyB64: alice.pubB64(), OOBI: "https://alice.test/oobi/EAlice",
+		PublicKeyB64: alice.pubB64(), OOBI: "https://alice.test/oobi/EAlice", KEL: "stub",
 	}
 	alice.signRequest(t, req, func(sig string) { req.Signature = sig })
 
@@ -470,7 +482,7 @@ func TestAnUncheckableAIDIsRefused(t *testing.T) {
 	s := serverWithVerifier(t, map[string]string{"EAlice": "somekey"})
 
 	req := protocol.EnrollRequest{
-		V: protocol.JSONVersion, AID: "EUnknown", PublicKeyB64: stranger.pubB64(),
+		V: protocol.JSONVersion, AID: "EUnknown", PublicKeyB64: stranger.pubB64(), KEL: "stub",
 	}
 	stranger.signRequest(t, req, func(sig string) { req.Signature = sig })
 
