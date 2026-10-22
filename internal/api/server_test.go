@@ -2,13 +2,13 @@ package api
 
 import (
 	"bytes"
-	"context"
 	"crypto/ed25519"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -223,7 +223,7 @@ func TestTheFullRoundTrip(t *testing.T) {
 	for _, m := range collected.Messages {
 		ids = append(ids, m.MessageID)
 	}
-	ackReq := protocol.AckRequest{V: protocol.JSONVersion, AID: alice.aid, MessageIDs: ids}
+	ackReq := protocol.AckRequest{V: protocol.JSONVersion, AID: alice.aid, MessageIDs: strings.Join(ids, " ")}
 	alice.signRequest(t, ackReq, func(sig string) { ackReq.Signature = sig })
 	w = post(t, s, "/ack", ackReq)
 	if w.Code != http.StatusOK {
@@ -252,7 +252,7 @@ func TestAckIsScopedToTheOwner(t *testing.T) {
 	mallory := newIdentity(t, "EMallory")
 	enroll(t, s, mallory)
 	ackReq := protocol.AckRequest{
-		V: protocol.JSONVersion, AID: mallory.aid, MessageIDs: []string{deposited.MessageID}}
+		V: protocol.JSONVersion, AID: mallory.aid, MessageIDs: deposited.MessageID}
 	mallory.signRequest(t, ackReq, func(sig string) { ackReq.Signature = sig })
 
 	w = post(t, s, "/ack", ackReq)
@@ -393,7 +393,7 @@ func TestForwardedHeadersAreIgnoredUnlessTrusted(t *testing.T) {
 	}
 }
 
-// stubVerifier stands in for a KERI service, so enrollment binding can be
+// stubVerifier stands in for key-log verification, so enrollment binding can be
 // tested without one running.
 type stubVerifier struct {
 	// bound maps AID to the key that genuinely belongs to it.
@@ -402,7 +402,7 @@ type stubVerifier struct {
 
 func (stubVerifier) Enabled() bool { return true }
 
-func (v stubVerifier) Verify(_ context.Context, aid, _, publicKeyB64 string) verify.Result {
+func (v stubVerifier) Verify(aid, _, publicKeyB64 string) verify.Result {
 	real, ok := v.bound[aid]
 	if !ok {
 		return verify.Result{Reason: "no KEL published for that AID"}

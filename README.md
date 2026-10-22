@@ -68,19 +68,14 @@ the Blake3 SAID of its inception event, so an inception containing these keys
 either derives this AID or it does not; producing one that derives somebody
 else's means finding a hash collision.
 
-**This service does not perform that check itself.** Getting KERI validation
-right means exact serialisation, exact hash inputs, and the same dummied fields
-the reference implementation uses. Reimplemented per service, that is several
-chances to differ subtly and fail in ways nobody can debug. So the KEL goes to a
-KERI service that already does it, and this service's job is to fetch honestly,
-ask, and refuse clearly.
+So an enrolment carries the identity's signed key event log (`kel`, a CESR
+stream in base64url), and this service checks it **in process with keri-go**,
+the engine the Identity Agent itself runs, through `sp-common/verify`: the log
+must verify, derive the AID claimed, and name the presented key as the current
+one. Nothing is fetched and no other service is asked. This is on by default.
 
-```sh
-./mailbox -apex https://mailbox.example.org -keri-service https://keri.example.org
-```
-
-**It refuses to start without one.** Running unverified is a legitimate choice
-for development and a bad one to make by omission, so it must be said out loud:
+Running unverified is a legitimate choice for development and a bad one to make
+by omission, so it must be said out loud:
 
 ```sh
 ./mailbox -apex http://localhost:8090 -allow-unverified-enrollment
@@ -98,16 +93,13 @@ Squatting, not interception. An attacker who claims an AID that isn't theirs:
 - **can deny the real owner** the use of this operator, since a second key for
   an existing AID is refused.
 
-### Fetching a URL somebody else chose
+### Signed requests carry only strings
 
-Resolving an OOBI means making an outbound connection to an address the caller
-supplied, from inside whatever network this service runs in. That is the shape
-of a server-side request forgery, so addresses are checked before anything is
-fetched — on the **resolved** addresses rather than the hostname, because a name
-is not a location and anybody can point a public domain at `127.0.0.1`.
-
-A host that cannot be resolved is refused rather than allowed. An unresolvable
-name is not evidence of safety.
+Every signed request is signed over the Identity Agent's one canonical form
+(ADR-049): string fields of printable ASCII, keys sorted, no HTML escaping, the
+`signature` field left out. So a collect request's `limit` is a decimal string
+(`"limit": "50"`), and an acknowledgement's `message_ids` is one string with the
+ids separated by single spaces. A number or a list is refused.
 
 ## Running it
 
@@ -129,7 +121,6 @@ deposits.
 | `-aid` | `MAILBOX_AID` | — | this operator's own AID |
 | `-retention` | — | `720h` (30 days) | how long an uncollected message is kept |
 | `-trust-proxy` | `MAILBOX_TRUST_PROXY=1` | off | trust `X-Forwarded-For` |
-| `-keri-service` | `MAILBOX_KERI_SERVICE` | — | KERI service that confirms an enrolling key belongs to its AID |
 | `-allow-unverified-enrollment` | `MAILBOX_ALLOW_UNVERIFIED=1` | off | **development only**; accepts any key for any AID |
 
 **`-trust-proxy` only behind a proxy that sets the header itself.** Trusting it
@@ -143,10 +134,10 @@ uses to be reached while it is offline. The Identity Agent is open source at
 [identity-bot](https://github.com/LF-Decentralized-Trust-labs/identity-bot), and
 the network roles it relies on — witness, watcher, relay and the services around
 them — are described in its ADR-024 (*KERI Network Participation*). Signed
-requests use the same canonical form as the relay: Ed25519 over the JSON body
-with keys sorted and the `signature` field removed, as ADR-024 describes. The
+requests use the same canonical form as the relay, set by ADR-049 (*One signing
+form for every service-provider request*). The
 mailbox wire format itself is defined by this repository; the body version string
-is `IAMAILBOX10JSON`.
+is `IAMAILBOX11JSON`.
 
 Anybody may run this service. An agent is not tied to one operator.
 

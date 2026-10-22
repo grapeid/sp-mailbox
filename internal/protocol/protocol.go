@@ -33,8 +33,8 @@ import "time"
 // agent draws from is meant to grow.
 
 const (
-	Version     = "1.0"
-	JSONVersion = "IAMAILBOX10JSON"
+	Version     = "1.1"
+	JSONVersion = "IAMAILBOX11JSON"
 
 	// A deposit is one DIDComm envelope. The cap is generous for a message and
 	// mean for a file: a mailbox is a way to reach somebody who is away, not a
@@ -94,7 +94,11 @@ type EnrollRequest struct {
 	AID          string `json:"aid"`
 	PublicKeyB64 string `json:"public_key_b64"`
 	OOBI         string `json:"oobi,omitempty"`
-	Signature    string `json:"signature"`
+	// KEL is the identity's signed key event log, a CESR stream in base64url.
+	// It is what proves the key belongs to the AID, and it is signed with the
+	// rest of the request.
+	KEL       string `json:"kel"`
+	Signature string `json:"signature"`
 }
 
 type EnrollResponse struct {
@@ -129,9 +133,11 @@ type DepositResponse struct {
 // CollectRequest asks for waiting messages. Signed: reading somebody's mail is
 // exactly the thing that must be proven.
 type CollectRequest struct {
-	V         string `json:"v"`
-	AID       string `json:"aid"`
-	Limit     int    `json:"limit,omitempty"`
+	V   string `json:"v"`
+	AID string `json:"aid"`
+	// Limit is a decimal count, carried as a string because every signed
+	// field is a string (the Identity Agent's ADR-049).
+	Limit     string `json:"limit,omitempty"`
 	Signature string `json:"signature"`
 }
 
@@ -157,10 +163,12 @@ type CollectResponse struct {
 // to know. Holding until the recipient says it has them costs storage and loses
 // nothing.
 type AckRequest struct {
-	V          string   `json:"v"`
-	AID        string   `json:"aid"`
-	MessageIDs []string `json:"message_ids"`
-	Signature  string   `json:"signature"`
+	V   string `json:"v"`
+	AID string `json:"aid"`
+	// MessageIDs are separated by single spaces: one string, because every
+	// signed field is a string (the Identity Agent's ADR-049).
+	MessageIDs string `json:"message_ids"`
+	Signature  string `json:"signature"`
 }
 
 type AckResponse struct {

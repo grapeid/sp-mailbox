@@ -27,8 +27,6 @@ func main() {
 		retention = flag.Duration("retention", protocol.DefaultRetention, "how long an uncollected message is kept")
 		trustXFF  = flag.Bool("trust-proxy", os.Getenv("MAILBOX_TRUST_PROXY") == "1",
 			"trust X-Forwarded-For; only behind a proxy that sets it")
-		keriService = flag.String("keri-service", os.Getenv("MAILBOX_KERI_SERVICE"),
-			"KERI service used to confirm an enrolling key belongs to its AID")
 		allowUnverified = flag.Bool("allow-unverified-enrollment",
 			os.Getenv("MAILBOX_ALLOW_UNVERIFIED") == "1",
 			"accept enrollments without checking the key belongs to the AID (development only)")
@@ -44,26 +42,16 @@ func main() {
 			"and inferring it from request headers would let a caller redirect deposits")
 	}
 
-	// Refuse to run silently unverified.
-	//
-	// Without a KERI service there is no way to tell whether an enrolling key
-	// belongs to the AID it names, so anybody can take any identifier and lock
-	// its real owner out of this operator. That is a legitimate choice for
-	// development and a bad one to make by omission, so it has to be said out
-	// loud rather than being what happens when a flag is forgotten.
-	var verifier verify.Verifier = verify.Unverified{}
-	switch {
-	case *keriService != "":
-		verifier = verify.NewKeriService(*keriService)
-		log.Printf("[mailbox] enrollments verified against %s", *keriService)
-	case *allowUnverified:
+	// Every enrolment is checked: the enrolling identity sends its signed key
+	// event log, and keri-go confirms in this process that the log derives the
+	// AID and names the key presented. Turning that off is a development choice
+	// that has to be made out loud, because without it anybody can take any
+	// identifier and deny its real owner the use of this operator.
+	var verifier verify.Verifier = verify.KeyLog{}
+	if *allowUnverified {
+		verifier = verify.Unverified{}
 		log.Print("[mailbox] WARNING: running with unverified enrollment. Anyone can claim " +
 			"any AID and deny its real owner the use of this operator. Development only.")
-	default:
-		log.Fatal("refusing to start: without -keri-service there is no way to tell whether " +
-			"an enrolling key belongs to the AID it claims, so anybody could take any " +
-			"identifier. Pass -keri-service, or -allow-unverified-enrollment if this is " +
-			"a development instance")
 	}
 
 	st, err := store.Open(*dbPath)

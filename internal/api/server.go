@@ -7,6 +7,7 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -164,7 +165,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusMethodNotAllowed, "POST only")
 		return
 	}
-	raw, err := readBody(r, 16*1024)
+	raw, err := readBody(r, 96*1024)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "could not read body")
 		return
@@ -175,7 +176,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.AID == "" || req.PublicKeyB64 == "" || req.Signature == "" {
-		writeErr(w, http.StatusBadRequest, "aid, public_key_b64 and signature are required")
+		writeErr(w, http.StatusBadRequest, "aid, public_key_b64, kel and signature are required")
 		return
 	}
 
@@ -198,7 +199,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	// anything, since deposits are encrypted to the recipient, but to take the
 	// identifier and deny its real owner the use of this operator.
 	if s.verifier.Enabled() {
-		result := s.verifier.Verify(r.Context(), req.AID, req.OOBI, req.PublicKeyB64)
+		result := s.verifier.Verify(req.AID, req.KEL, req.PublicKeyB64)
 		if !result.Verified {
 			writeErr(w, http.StatusForbidden,
 				"could not confirm this key belongs to that identity: "+result.Reason)
@@ -207,7 +208,7 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 	} else {
 		// Says so on every enrollment rather than only at startup. An operator
 		// running without verification should be reminded by its own logs.
-		s.verifier.Verify(r.Context(), req.AID, req.OOBI, req.PublicKeyB64)
+		s.verifier.Verify(req.AID, req.KEL, req.PublicKeyB64)
 	}
 
 	enrollment, err := s.store.Enroll(req.AID, req.PublicKeyB64, req.OOBI)
@@ -355,7 +356,16 @@ func (s *Server) handleCollect(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	messages, more, err := s.store.Collect(req.AID, req.Limit)
+	limit := 0
+	if req.Limit != "" {
+		n, err := strconv.Atoi(req.Limit)
+		if err != nil || n < 0 {
+			writeErr(w, http.StatusBadRequest, "limit is a decimal count")
+			return
+		}
+		limit = n
+	}
+	messages, more, err := s.store.Collect(req.AID, limit)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not read the mailbox")
 		return
@@ -403,7 +413,7 @@ func (s *Server) handleAck(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, err.Error())
 		return
 	}
-	dropped, err := s.store.Ack(req.AID, req.MessageIDs)
+	dropped, err := s.store.Ack(req.AID, strings.Fields(req.MessageIDs))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "could not drop messages")
 		return
