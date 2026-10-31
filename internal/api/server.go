@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/LF-Decentralized-Trust-labs/identity-bot/identity-agent-core/relayproto"
+	"github.com/grapeid/sp-common/decode"
 	"github.com/grapeid/sp-common/sign"
 	"github.com/grapeid/sp-common/verify"
 	"github.com/grapeid/sp-mailbox/internal/protocol"
@@ -185,9 +186,9 @@ func (s *Server) handleEnroll(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "aid, public_key_b64, kel and signature are required")
 		return
 	}
-	presented, err := rawKey(req.PublicKeyB64)
+	presented, err := decode.Ed25519Key(req.PublicKeyB64)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
+		writeErr(w, http.StatusBadRequest, "public_key_b64: "+err.Error())
 		return
 	}
 	// Signed over exactly what was sent, not a re-encoding of it: a field the
@@ -417,32 +418,22 @@ func decodeSigned(raw []byte, v interface{}) (map[string]interface{}, error) {
 	return fields, nil
 }
 
-// rawKey reads a base64 Ed25519 public key in any common spelling.
-func rawKey(b64 string) ([]byte, error) {
-	for _, enc := range []*base64.Encoding{base64.StdEncoding, base64.RawStdEncoding, base64.URLEncoding, base64.RawURLEncoding} {
-		if raw, err := enc.DecodeString(b64); err == nil && len(raw) == ed25519.PublicKeySize {
-			return raw, nil
-		}
-	}
-	return nil, fmt.Errorf("public_key_b64 is not a base64 Ed25519 key")
-}
-
 // sameKey compares keys as bytes: the same key in two base64 spellings is the
 // same key.
-func sameKey(storedB64 string, presented []byte) bool {
-	held, err := rawKey(storedB64)
-	return err == nil && ed25519.PublicKey(held).Equal(ed25519.PublicKey(presented))
+func sameKey(storedB64 string, presented ed25519.PublicKey) bool {
+	held, err := decode.Ed25519Key(storedB64)
+	return err == nil && held.Equal(presented)
 }
 
 // extendsHeld reports whether a presented key event log extends the one held,
 // by relayproto's rule: every held event, in order, compared as keri-go reads
 // them. A log that rewrites history extends nothing.
 func extendsHeld(presentedB64, heldB64 string) bool {
-	presented, err := base64.RawURLEncoding.DecodeString(presentedB64)
+	presented, err := decode.Base64(presentedB64)
 	if err != nil {
 		return false
 	}
-	held, err := base64.RawURLEncoding.DecodeString(heldB64)
+	held, err := decode.Base64(heldB64)
 	if err != nil {
 		return false
 	}

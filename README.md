@@ -117,7 +117,10 @@ An identity that rotates enrols again with its new key and its newer key event
 log. When that log extends the one the mailbox holds (every held event, in
 order, as keri-go reads them) and names the new key, the mailbox moves to the
 new key and keeps its deposit token; the old key stops working at once. Keys are
-compared as bytes, so the same key in another base64 spelling is the same key.
+compared as bytes, so the same key in another base64 alphabet is the same key.
+Keys, signatures and key event logs are read by sp-common's `decode`, strictly:
+each alphabet has one string per value, and qb64 must carry its code and zero
+lead bits.
 
 ### One protocol version
 
