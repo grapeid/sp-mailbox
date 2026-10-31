@@ -10,8 +10,8 @@ github.com/gorilla/websocket v1.5.3 h1:saDtZ6Pbx/0u+bgYQ3q96pZgCzfhKXGPqt7kZ72aN
 github.com/gorilla/websocket v1.5.3/go.mod h1:YR8l580nyteQvAITg2hZ9XVh4b55+EU/adAjf1fMHhE=
 github.com/grapeid/keri-go v0.1.5 h1:/HCHgbQbJ+HP/cHIe0DyxLXMnBC8gK3Z2sz0rseltGA=
 github.com/grapeid/keri-go v0.1.5/go.mod h1:Gypsr09J5eYiw9vpimQrE8nn9UolBOv0HkkrdNynLYg=
-github.com/grapeid/sp-common v0.0.0-20261022001445-5f29d1407291 h1:kOl/VmNx65WHpkB+NwnnkFlvKoIXFiI1O16NhBDCEZ4=
-github.com/grapeid/sp-common v0.0.0-20261022001445-5f29d1407291/go.mod h1:hc36ol6f2iNm1Q2qCejQCzxY+Pacpp165w8KSqERUIM=
+github.com/grapeid/sp-common v0.0.0-20261031044116-ebcd35babcc8 h1:5x+net0nHqIV77VnZOwOr8AZLkG/czutIfYTVGuRJWg=
+github.com/grapeid/sp-common v0.0.0-20261031044116-ebcd35babcc8/go.mod h1:uWr9oNdbmNyWfB7DKPTKW1qPEN5bAolhHn522BOlFNk=
 github.com/hashicorp/golang-lru/v2 v2.0.7 h1:a+bsQ5rvGLjzHuww6tVxozPZFVghXaHOwFs4luLUK2k=
 github.com/hashicorp/golang-lru/v2 v2.0.7/go.mod h1:QeFd9opnmA6QUJc5vARoKUSoFhyfM2/ZepoAG6RGpeM=
 github.com/hashicorp/yamux v0.1.2 h1:XtB8kyFOyHXYVFnwT5C3+Bdo8gArse7j2AQ0DA0Uey8=
